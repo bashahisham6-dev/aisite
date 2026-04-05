@@ -303,10 +303,8 @@ let currentChatId = null;
   Chat data structure:
   allChats[id] = {
     title: string,
-    // messages is an array of "nodes"
-    // Each node = { role, branches: [string], branchIndex: number }
-    // branches = array of content strings (each edit/regen creates a new branch)
     nodes: []
+    // Each node = { role, branches: [string], branchIndex: number }
   }
 */
 let allChats = {};
@@ -324,12 +322,10 @@ function save() {
    HELPERS
 ═══════════════════════════════════════ */
 
-// Get active content for a node
 function nodeContent(node) {
   return node.branches[node.branchIndex];
 }
 
-// Build flat messages array for API (use active branch of each node)
 function buildAPIMessages(chatId) {
   return allChats[chatId].nodes.map(n => ({
     role: n.role,
@@ -337,11 +333,9 @@ function buildAPIMessages(chatId) {
   }));
 }
 
-// Render markdown + LaTeX
 function renderContent(text) {
-  // Use marked for markdown
-  let html = marked.parse(text, { breaks: true, gfm: true });
-  return html;
+  // FIX #1: marked.use() instead of deprecated marked.setOptions()
+  return marked.parse(text);
 }
 
 function applyKatex(el) {
@@ -472,24 +466,21 @@ function renderMessages() {
       bubble.textContent = nodeContent(node);
     } else {
       bubble.innerHTML = renderContent(nodeContent(node));
-      // Apply KaTeX after setting innerHTML
       setTimeout(() => applyKatex(bubble), 0);
     }
     wrapper.appendChild(bubble);
 
-    // Branch bar (shown when there are multiple branches OR always for user msgs)
+    // Branch bar
     const branchBar = document.createElement('div');
     branchBar.className = 'branch-bar';
 
     if (node.role === 'user') {
-      // Edit button
       const editBtn = document.createElement('button');
       editBtn.className = 'branch-btn';
       editBtn.textContent = '✎ Edit';
       editBtn.onclick = () => enterEditMode(nodeIdx);
       branchBar.appendChild(editBtn);
     } else {
-      // Regenerate button for AI
       const regenBtn = document.createElement('button');
       regenBtn.className = 'branch-btn';
       regenBtn.textContent = '↺ Regen';
@@ -497,7 +488,7 @@ function renderMessages() {
       branchBar.appendChild(regenBtn);
     }
 
-    // Branch navigation (if multiple branches)
+    // Branch navigation
     if (node.branches.length > 1) {
       const prevBtn = document.createElement('button');
       prevBtn.className = 'branch-btn';
@@ -530,22 +521,19 @@ function renderMessages() {
    BRANCHING LOGIC
 ═══════════════════════════════════════ */
 
-function switchBranch(nodeIdx, delta) {
+// FIX #2: Made async so callAPI() errors are properly caught
+async function switchBranch(nodeIdx, delta) {
   const chat = allChats[currentChatId];
   const node = chat.nodes[nodeIdx];
   const newIdx = node.branchIndex + delta;
   if (newIdx < 0 || newIdx >= node.branches.length) return;
   node.branchIndex = newIdx;
 
-  // If this is a user node, the AI response after it needs to be cleared
-  // (we only keep the nodes up to and including this one when switching user branches,
-  //  but we DON'T delete — the subsequent nodes stay for the currently-active branch)
-  // Actually for simplicity: when switching a user branch, trim nodes after it and re-run AI
   if (node.role === 'user') {
     chat.nodes = chat.nodes.slice(0, nodeIdx + 1);
     save();
     renderMessages();
-    callAPI(); // get AI response for this branch
+    await callAPI();
   } else {
     save();
     renderMessages();
@@ -577,10 +565,8 @@ function enterEditMode(nodeIdx) {
   saveBtn.onclick = () => {
     const newText = textarea.value.trim();
     if (!newText) return;
-    // Add new branch to this user node
     node.branches.push(newText);
     node.branchIndex = node.branches.length - 1;
-    // Trim everything after this node (the old AI response is gone)
     allChats[currentChatId].nodes = allChats[currentChatId].nodes.slice(0, nodeIdx + 1);
     save();
     renderMessages();
@@ -597,8 +583,6 @@ function enterEditMode(nodeIdx) {
 
 async function regenerateFrom(nodeIdx) {
   const chat = allChats[currentChatId];
-  const node = chat.nodes[nodeIdx];
-  // Remove this AI node and everything after, re-query
   chat.nodes = chat.nodes.slice(0, nodeIdx);
   save();
   renderMessages();
@@ -616,8 +600,6 @@ async function sendMessage() {
   if (!currentChatId) startNewChat();
 
   const chat = allChats[currentChatId];
-
-  // Push user node
   chat.nodes.push({ role: 'user', branches: [text], branchIndex: 0 });
   save();
   renderMessages();
@@ -651,6 +633,8 @@ async function callAPI() {
       },
       body: JSON.stringify({
         model,
+        // FIX #3: Added max_tokens to prevent truncated responses
+        max_tokens: 4096,
         messages: [
           { role: 'system', content: PERSONAS[currentPID].system },
           ...buildAPIMessages(currentChatId)
@@ -663,7 +647,6 @@ async function callAPI() {
     const reply = data.choices?.[0]?.message?.content || '(no response)';
     chat.nodes.push({ role: 'assistant', branches: [reply], branchIndex: 0 });
 
-    // Auto-title
     if (chat.title === 'Empty Chat' && chat.nodes.length >= 2) {
       generateTitle(currentChatId, nodeContent(chat.nodes[0]), reply);
     }
@@ -689,6 +672,7 @@ async function generateTitle(id, userMsg, aiMsg) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
       body: JSON.stringify({
         model: 'mistral-small-latest',
+        max_tokens: 20,
         messages: [
           { role: 'system', content: 'Generate a chat title of 5 words or fewer. No punctuation. No quotes.' },
           { role: 'user', content: `User: ${userMsg}\nAI: ${aiMsg}` }
@@ -711,8 +695,8 @@ async function generateTitle(id, userMsg, aiMsg) {
 // Restore theme
 document.body.setAttribute('data-theme', localStorage.getItem('chat_theme') || 'dark');
 
-// Configure marked
-marked.setOptions({ breaks: true, gfm: true });
+// FIX #4: marked.use() replaces deprecated marked.setOptions()
+marked.use({ breaks: true, gfm: true });
 
 // Load most recent chat or create new
 const keys = Object.keys(allChats).sort((a,b) => b-a);
