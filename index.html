@@ -8,7 +8,8 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<!-- marked 4.x: much better iOS 10 / legacy Chrome compatibility than v9 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
 
 <style>
   :root {
@@ -224,20 +225,32 @@ function buildAPIMessages(chatId) {
   return result;
 }
 
+// Safe markdown render with fallback — if marked crashes, show plain text
 function renderContent(text) {
-  return marked.parse(text);
+  try {
+    return marked.parse(text);
+  } catch(e) {
+    // Fallback: escape HTML and wrap in a paragraph
+    var escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return '<p>' + escaped.replace(/\n/g, '<br>') + '</p>';
+  }
 }
 
 function applyKatex(el) {
-  renderMathInElement(el, {
-    delimiters: [
-      { left: '$$', right: '$$', display: true },
-      { left: '$', right: '$', display: false },
-      { left: '\\(', right: '\\)', display: false },
-      { left: '\\[', right: '\\]', display: true }
-    ],
-    throwOnError: false
-  });
+  try {
+    renderMathInElement(el, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '\\[', right: '\\]', display: true }
+      ],
+      throwOnError: false
+    });
+  } catch(e) {}
 }
 
 function autoResize(el) {
@@ -513,21 +526,30 @@ function callAPI() {
   })
   .then(function(resp) { return resp.json(); })
   .then(function(data) {
-    if (loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl);
-    var reply = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content)
-      ? data.choices[0].message.content : '(no response)';
-    chat.nodes.push({ role: 'assistant', branches: [reply], branchIndex: 0 });
-    if (chat.title === 'Empty Chat' && chat.nodes.length >= 2) {
-      generateTitle(chatIdAtCall, nodeContent(chat.nodes[0]), reply);
+    // Safely remove loading bubble
+    try { if (loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl); } catch(e) {}
+
+    var reply = '(no response)';
+    try {
+      if (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) {
+        reply = data.choices[0].message.content;
+      }
+    } catch(e) {}
+
+    allChats[chatIdAtCall].nodes.push({ role: 'assistant', branches: [reply], branchIndex: 0 });
+
+    if (allChats[chatIdAtCall].title === 'Empty Chat' && allChats[chatIdAtCall].nodes.length >= 2) {
+      generateTitle(chatIdAtCall, nodeContent(allChats[chatIdAtCall].nodes[0]), reply);
     }
     save();
-    renderMessages();
+    // Only re-render if we're still on the same chat
+    if (currentChatId === chatIdAtCall) renderMessages();
   })
   .catch(function(e) {
-    if (loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl);
-    chat.nodes.push({ role: 'assistant', branches: ['\u26a0\ufe0f Error reaching the API. Check your key or connection.'], branchIndex: 0 });
+    try { if (loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl); } catch(ex) {}
+    allChats[chatIdAtCall].nodes.push({ role: 'assistant', branches: ['\u26a0\ufe0f Error reaching the API. Check your key or connection.'], branchIndex: 0 });
     save();
-    renderMessages();
+    if (currentChatId === chatIdAtCall) renderMessages();
     console.error(e);
   });
 }
@@ -547,8 +569,12 @@ function generateTitle(id, userMsg, aiMsg) {
   })
   .then(function(resp) { return resp.json(); })
   .then(function(data) {
-    var title = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content)
-      ? data.choices[0].message.content.trim() : 'Chat';
+    var title = 'Chat';
+    try {
+      if (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) {
+        title = data.choices[0].message.content.trim();
+      }
+    } catch(e) {}
     allChats[id].title = title;
     save();
     renderChatList();
@@ -556,8 +582,11 @@ function generateTitle(id, userMsg, aiMsg) {
   .catch(function() { allChats[id].title = 'Chat'; save(); });
 }
 
+// Init
 document.body.setAttribute('data-theme', localStorage.getItem('chat_theme') || 'dark');
-marked.use({ breaks: true, gfm: true });
+
+// marked 4.x uses setOptions (marked.use not available in 4.x)
+marked.setOptions({ breaks: true, gfm: true });
 
 var initKeys = Object.keys(allChats);
 initKeys.sort(function(a, b) { return b - a; });
