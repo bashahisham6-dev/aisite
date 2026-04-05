@@ -31,7 +31,6 @@
     overflow: hidden;
   }
 
-  /* ── Sidebar ── */
   #sidebar {
     position: fixed; left: -260px; top: 0; width: 260px; height: 100%;
     background: var(--sidebar); border-right: 1px solid var(--border);
@@ -62,7 +61,6 @@
   .chat-actions { display: -webkit-box; display: -webkit-flex; display: flex; gap: 6px; }
   .chat-action-btn { background: none; border: none; color: #007aff; cursor: pointer; font-size: 14px; padding: 0 3px; }
 
-  /* ── Main shell — table layout for rock-solid iOS 10 support ── */
   #main {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
@@ -92,7 +90,6 @@
     outline: none; -webkit-appearance: none; appearance: none;
   }
 
-  /* ── Messages: block layout, NO flexbox ── */
   #messages {
     -webkit-flex: 1; flex: 1;
     overflow-y: auto;
@@ -100,15 +97,13 @@
     padding: 12px 10px;
   }
 
-  /* Each message row is a block that clears floats */
   .msg {
     display: block;
     width: 100%;
-    overflow: hidden; /* clearfix for the float inside */
+    overflow: hidden;
     margin-bottom: 12px;
   }
 
-  /* Bubble floats left or right inside the row */
   .bubble {
     display: block;
     max-width: 88%;
@@ -119,22 +114,17 @@
     word-wrap: break-word;
   }
   .msg.user .bubble {
-    float: right;
-    clear: right;
-    background: var(--user-bubble);
-    color: #ffffff;
+    float: right; clear: right;
+    background: var(--user-bubble); color: #ffffff;
     border-bottom-right-radius: 4px;
   }
   .msg.assistant .bubble {
-    float: left;
-    clear: left;
-    background: var(--ai-bubble);
-    color: var(--text);
+    float: left; clear: left;
+    background: var(--ai-bubble); color: var(--text);
     border: 1px solid var(--border);
     border-bottom-left-radius: 4px;
   }
 
-  /* Branch bar sits below the bubble, same side */
   .branch-bar {
     display: block;
     overflow: hidden;
@@ -153,7 +143,6 @@
   }
   .branch-btn:disabled { color: #555; cursor: default; }
 
-  /* Markdown inside bubbles */
   .bubble p { margin-bottom: 0.5em; }
   .bubble p:last-child { margin-bottom: 0; }
   .bubble h1, .bubble h2, .bubble h3 { margin: 0.6em 0 0.3em; font-size: 1em; font-weight: 700; }
@@ -170,11 +159,7 @@
   .bubble th { background: var(--code-bg); }
   .bubble .katex { font-size: 1em; }
 
-  /* Edit mode */
-  .edit-wrap {
-    display: block;
-    overflow: hidden;
-  }
+  .edit-wrap { display: block; overflow: hidden; }
   .msg.user .edit-wrap { float: right; max-width: 88%; }
   .msg.assistant .edit-wrap { float: left; max-width: 88%; }
 
@@ -190,7 +175,6 @@
   .edit-save-btn { background: #007aff; border: none; border-radius: 8px; padding: 5px 12px; color: #fff; font-size: 12px; cursor: pointer; margin-right: 6px; }
   .edit-cancel-btn { background: var(--border); border: none; border-radius: 8px; padding: 5px 10px; color: var(--text); font-size: 12px; cursor: pointer; }
 
-  /* Loading dots */
   .dots { display: -webkit-box; display: -webkit-flex; display: flex; gap: 5px; padding: 4px 2px; }
   .dots span { width: 7px; height: 7px; background: #666; border-radius: 50%; -webkit-animation: pulse 1.4s infinite; animation: pulse 1.4s infinite; }
   .dots span:nth-child(2) { -webkit-animation-delay: 0.2s; animation-delay: 0.2s; }
@@ -198,7 +182,6 @@
   @-webkit-keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
   @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 
-  /* ── Footer ── */
   footer {
     display: -webkit-box; display: -webkit-flex; display: flex;
     -webkit-align-items: flex-end; align-items: flex-end;
@@ -291,6 +274,23 @@ try {
 function save() {
   try { localStorage.setItem('branch_chats_v3', JSON.stringify(allChats)); } catch(e) {}
 }
+
+/*
+  DATA MODEL
+  ==========
+  Each chat has a flat array of nodes up to the current "active path".
+  User nodes have:
+    - branches: array of text strings (one per edit)
+    - branchIndex: which branch is active
+    - savedChildren: object keyed by branchIndex, each value is an array
+      of the subsequent nodes that existed when that branch was last active.
+      e.g. { 0: [aiNode, userNode, aiNode, ...], 1: [aiNode] }
+
+  When you switch a user branch:
+    1. Save current subsequent nodes into savedChildren[oldIndex]
+    2. Restore savedChildren[newIndex] if it exists — no API call needed
+    3. Only call API if no saved children exist for the new branch
+*/
 
 function nodeContent(node) {
   return node.branches[node.branchIndex];
@@ -432,13 +432,10 @@ function renderMessages() {
 
   for (var i = 0; i < nodes.length; i++) {
     (function(node, nodeIdx) {
-
-      // Outer row — block element, clears floats via overflow:hidden
       var row = document.createElement('div');
       row.className = 'msg ' + node.role;
       row.setAttribute('data-node-idx', nodeIdx);
 
-      // Bubble
       var bubble = document.createElement('div');
       bubble.className = 'bubble';
 
@@ -450,12 +447,10 @@ function renderMessages() {
       }
       row.appendChild(bubble);
 
-      // Clearfix div so branch bar sits below the floated bubble
       var cf = document.createElement('div');
       cf.style.clear = 'both';
       row.appendChild(cf);
 
-      // Branch bar
       var branchBar = document.createElement('div');
       branchBar.className = 'branch-bar';
 
@@ -505,20 +500,46 @@ function renderMessages() {
   container.scrollTop = container.scrollHeight;
 }
 
+/* ═══════════════════════════════════════
+   BRANCHING — fixed to preserve existing
+   child nodes per branch instead of always
+   wiping and regenerating
+═══════════════════════════════════════ */
+
 function switchBranch(nodeIdx, delta) {
   var chat = allChats[currentChatId];
   var node = chat.nodes[nodeIdx];
-  var newIdx = node.branchIndex + delta;
-  if (newIdx < 0 || newIdx >= node.branches.length) return;
-  node.branchIndex = newIdx;
-  if (node.role === 'user') {
+  var oldIndex = node.branchIndex;
+  var newIndex = oldIndex + delta;
+  if (newIndex < 0 || newIndex >= node.branches.length) return;
+
+  // Only applies to user nodes (AI nodes just swap display content)
+  if (node.role !== 'user') {
+    node.branchIndex = newIndex;
+    save();
+    renderMessages();
+    return;
+  }
+
+  // Save the nodes that currently follow this user node
+  // into savedChildren under the old branch index
+  if (!node.savedChildren) node.savedChildren = {};
+  node.savedChildren[oldIndex] = chat.nodes.slice(nodeIdx + 1);
+
+  // Switch to new branch
+  node.branchIndex = newIndex;
+
+  // Restore saved children for the new branch if they exist
+  if (node.savedChildren[newIndex] && node.savedChildren[newIndex].length > 0) {
+    chat.nodes = chat.nodes.slice(0, nodeIdx + 1).concat(node.savedChildren[newIndex]);
+    save();
+    renderMessages();
+  } else {
+    // No saved response for this branch yet — trim and call API
     chat.nodes = chat.nodes.slice(0, nodeIdx + 1);
     save();
     renderMessages();
     callAPI();
-  } else {
-    save();
-    renderMessages();
   }
 }
 
@@ -529,11 +550,9 @@ function enterEditMode(nodeIdx) {
 
   var node = allChats[currentChatId].nodes[nodeIdx];
   var currentText = nodeContent(node);
-  var isUser = node.role === 'user';
 
   row.innerHTML = '';
 
-  // Wrap floated like the bubble was
   var wrap = document.createElement('div');
   wrap.className = 'edit-wrap';
 
@@ -552,9 +571,19 @@ function enterEditMode(nodeIdx) {
   saveBtn.onclick = function() {
     var newText = textarea.value.trim();
     if (!newText) return;
+
+    var chat = allChats[currentChatId];
+
+    // Save current children under the current branch before creating a new one
+    if (!node.savedChildren) node.savedChildren = {};
+    node.savedChildren[node.branchIndex] = chat.nodes.slice(nodeIdx + 1);
+
+    // Add new branch
     node.branches.push(newText);
     node.branchIndex = node.branches.length - 1;
-    allChats[currentChatId].nodes = allChats[currentChatId].nodes.slice(0, nodeIdx + 1);
+
+    // New branch has no children yet — trim and get fresh AI response
+    chat.nodes = chat.nodes.slice(0, nodeIdx + 1);
     save();
     renderMessages();
     callAPI();
@@ -574,7 +603,14 @@ function enterEditMode(nodeIdx) {
 
 function regenerateFrom(nodeIdx) {
   var chat = allChats[currentChatId];
+  // Remove the AI node at nodeIdx and everything after
   chat.nodes = chat.nodes.slice(0, nodeIdx);
+  // Also clear any savedChildren on the preceding user node
+  // so the regen becomes the new canonical response
+  var userNode = chat.nodes[nodeIdx - 1];
+  if (userNode && userNode.savedChildren) {
+    userNode.savedChildren[userNode.branchIndex] = [];
+  }
   save();
   renderMessages();
   callAPI();
@@ -586,7 +622,7 @@ function sendMessage() {
   if (!text) return;
   if (!currentChatId) startNewChat();
   var chat = allChats[currentChatId];
-  chat.nodes.push({ role: 'user', branches: [text], branchIndex: 0 });
+  chat.nodes.push({ role: 'user', branches: [text], branchIndex: 0, savedChildren: {} });
   save();
   renderMessages();
   input.value = '';
