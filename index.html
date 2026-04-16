@@ -198,12 +198,14 @@
     font-family: inherit; line-height: 1.4;
   }
   #user-input:focus { border-color: #007aff; }
+  #user-input:disabled { opacity: 0.5; cursor: not-allowed; }
   #send-btn {
     width: 34px; height: 34px; border-radius: 50%; border: none;
     background: #007aff; color: #fff; font-size: 16px; cursor: pointer;
     -webkit-flex-shrink: 0; flex-shrink: 0;
   }
   #send-btn:active { opacity: 0.7; }
+  #send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
   #overlay {
     display: none; position: fixed; top: 0; left: 0;
@@ -275,22 +277,12 @@ function save() {
   try { localStorage.setItem('branch_chats_v3', JSON.stringify(allChats)); } catch(e) {}
 }
 
-/*
-  DATA MODEL
-  ==========
-  Each chat has a flat array of nodes up to the current "active path".
-  User nodes have:
-    - branches: array of text strings (one per edit)
-    - branchIndex: which branch is active
-    - savedChildren: object keyed by branchIndex, each value is an array
-      of the subsequent nodes that existed when that branch was last active.
-      e.g. { 0: [aiNode, userNode, aiNode, ...], 1: [aiNode] }
-
-  When you switch a user branch:
-    1. Save current subsequent nodes into savedChildren[oldIndex]
-    2. Restore savedChildren[newIndex] if it exists — no API call needed
-    3. Only call API if no saved children exist for the new branch
-*/
+function setInputLocked(locked) {
+  var btn = document.getElementById('send-btn');
+  var inp = document.getElementById('user-input');
+  btn.disabled = locked;
+  inp.disabled = locked;
+}
 
 function nodeContent(node) {
   return node.branches[node.branchIndex];
@@ -500,12 +492,6 @@ function renderMessages() {
   container.scrollTop = container.scrollHeight;
 }
 
-/* ═══════════════════════════════════════
-   BRANCHING — fixed to preserve existing
-   child nodes per branch instead of always
-   wiping and regenerating
-═══════════════════════════════════════ */
-
 function switchBranch(nodeIdx, delta) {
   var chat = allChats[currentChatId];
   var node = chat.nodes[nodeIdx];
@@ -513,7 +499,6 @@ function switchBranch(nodeIdx, delta) {
   var newIndex = oldIndex + delta;
   if (newIndex < 0 || newIndex >= node.branches.length) return;
 
-  // Only applies to user nodes (AI nodes just swap display content)
   if (node.role !== 'user') {
     node.branchIndex = newIndex;
     save();
@@ -521,21 +506,16 @@ function switchBranch(nodeIdx, delta) {
     return;
   }
 
-  // Save the nodes that currently follow this user node
-  // into savedChildren under the old branch index
   if (!node.savedChildren) node.savedChildren = {};
   node.savedChildren[oldIndex] = chat.nodes.slice(nodeIdx + 1);
 
-  // Switch to new branch
   node.branchIndex = newIndex;
 
-  // Restore saved children for the new branch if they exist
   if (node.savedChildren[newIndex] && node.savedChildren[newIndex].length > 0) {
     chat.nodes = chat.nodes.slice(0, nodeIdx + 1).concat(node.savedChildren[newIndex]);
     save();
     renderMessages();
   } else {
-    // No saved response for this branch yet — trim and call API
     chat.nodes = chat.nodes.slice(0, nodeIdx + 1);
     save();
     renderMessages();
@@ -574,15 +554,12 @@ function enterEditMode(nodeIdx) {
 
     var chat = allChats[currentChatId];
 
-    // Save current children under the current branch before creating a new one
     if (!node.savedChildren) node.savedChildren = {};
     node.savedChildren[node.branchIndex] = chat.nodes.slice(nodeIdx + 1);
 
-    // Add new branch
     node.branches.push(newText);
     node.branchIndex = node.branches.length - 1;
 
-    // New branch has no children yet — trim and get fresh AI response
     chat.nodes = chat.nodes.slice(0, nodeIdx + 1);
     save();
     renderMessages();
@@ -603,10 +580,7 @@ function enterEditMode(nodeIdx) {
 
 function regenerateFrom(nodeIdx) {
   var chat = allChats[currentChatId];
-  // Remove the AI node at nodeIdx and everything after
   chat.nodes = chat.nodes.slice(0, nodeIdx);
-  // Also clear any savedChildren on the preceding user node
-  // so the regen becomes the new canonical response
   var userNode = chat.nodes[nodeIdx - 1];
   if (userNode && userNode.savedChildren) {
     userNode.savedChildren[userNode.branchIndex] = [];
@@ -634,6 +608,9 @@ function callAPI() {
   var chat = allChats[currentChatId];
   var chatIdAtCall = currentChatId;
   var model = document.getElementById('model-select').value;
+
+  // Lock input while generating
+  setInputLocked(true);
 
   var container = document.getElementById('messages');
   var loadingRow = document.createElement('div');
@@ -670,12 +647,16 @@ function callAPI() {
       generateTitle(chatIdAtCall, nodeContent(allChats[chatIdAtCall].nodes[0]), reply);
     }
     save();
+    // Unlock input
+    setInputLocked(false);
     if (currentChatId === chatIdAtCall) renderMessages();
   })
   .catch(function(e) {
     try { if (loadingRow.parentNode) loadingRow.parentNode.removeChild(loadingRow); } catch(ex) {}
     allChats[chatIdAtCall].nodes.push({ role: 'assistant', branches: ['\u26a0\ufe0f Error reaching the API. Check your key or connection.'], branchIndex: 0 });
     save();
+    // Unlock input
+    setInputLocked(false);
     if (currentChatId === chatIdAtCall) renderMessages();
     console.error(e);
   });
